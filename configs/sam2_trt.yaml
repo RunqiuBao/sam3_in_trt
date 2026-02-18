@@ -1,0 +1,27 @@
+# SAM 2 TensorRT conversion config
+
+model:
+  name: "sam2.1_hiera_large"
+  checkpoint_url: "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt"
+  config: "sam2.1_hiera_l.yaml"
+
+export:
+  image_size: 1024
+  opset_version: 17
+  dynamic_axes: true
+  # Components to export (image_encoder is the heavy one)
+  components:
+    - image_encoder
+    # - prompt_encoder    # lightweight, keep in PyTorch
+    # - mask_decoder      # lightweight, keep in PyTorch
+
+tensorrt:
+  precision: "fp16"          # fp16 | fp32 | int8
+  workspace_mb: 4096
+  min_batch: 1
+  opt_batch: 1
+  max_batch: 4
+  # INT8 calibration (only if precision=int8)
+  calibration:
+    cache_file: "engines/calibration.cache"
+    num_images: 500

@@ -1,0 +1,8 @@
+checkpoints/
+models/
+engines/
+test_images/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
