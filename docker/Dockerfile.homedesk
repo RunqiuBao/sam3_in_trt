@@ -1,0 +1,45 @@
+# nvidiaが提供するcudaイメーjiをベースとしてダウンロード
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04
+USER root
+
+# Docker実行してシェルに入ったときの初期ディレクトリ（ワークディレクトリ）の設定
+WORKDIR /root/
+
+# nvidia-container-runtime（描画するための環境変数の設定）
+ENV NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
+ENV DEBIAN_FRONTEND=noninteractive
+
+# install minimum apps
+RUN apt-get update && apt-get -y install git vim less cmake tmux
+
+# install opencv python
+RUN apt-get update && apt-get install ffmpeg libsm6 libxext6 -y
+
+# install pytorch and useful python packages
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+# We use --no-cache-dir to keep the image small
+# We use --break-system-packages if the OS blocks global pip installs
+RUN pip install --no-cache-dir --break-system-packages \
+    opencv-python \
+    numpy \
+    tensorboard \
+    scikit-image \
+    lmdb \
+    matplotlib \
+    hydra-core \
+    thop \
+    tqdm \
+    pycocotools \
+    seaborn \
+    onnxruntime \
+    onnxruntime-openvino
+RUN pip install --no-cache-dir --break-system-packages \
+    torch==2.7.0 \
+    torchvision==0.22.0 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# add useful commands to .bashrc
+RUN echo 'alias kk="kill -9 %"' >> ~/.bashrc
