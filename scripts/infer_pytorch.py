@@ -33,7 +33,10 @@ def CheckIfAmpereGPU():
 def _main(
     image_path: Path,
     text_prompt: str = "",
+    point_prompt: list | None = None,
+    point_labels: list | None = None,
     box_prompt: list | None = None,
+    box_labels: list | None = None,
 ):
     logging.info("Starting SAM3 PyTorch model inference...")
     sam3_root = os.path.join(os.path.dirname(sam3.__file__), "..")
@@ -72,12 +75,27 @@ def _main(
         box_input_cxcywh = box_xywh_to_cxcywh(box_input_xywh)
         norm_box_cxcywh = normalize_bbox(box_input_cxcywh, width, height).flatten().tolist()
         starttime = time.time()
-        inference_state = processor.add_geometric_prompt(
-            state=inference_state,
-            box=norm_box_cxcywh,
-            label=True,
-        )
+        for ii in range(len(norm_box_cxcywh) // 4):
+            inference_state = processor.add_geometric_prompt(
+                state=inference_state,
+                box=norm_box_cxcywh[4 * ii:4 * (ii + 1)],
+                label=box_labels[ii],
+            )
         logging.info(f"box prompt processed in {time.time() - starttime} sec.")
+    if point_prompt is not None:
+        width, height = image.size
+        norm_point_input = torch.tensor(point_prompt).view(-1, 2)
+        norm_point_input[:, 0] /= width
+        norm_point_input[:, 1] /= height
+        norm_point_input = norm_point_input.flatten().tolist()
+        starttime = time.time()
+        for ii in range(len(norm_point_input) // 2):
+            inference_state = processor.add_geometric_prompt2(
+                state=inference_state,
+                point=norm_point_input[2 * ii:2 * (ii + 1)],
+                label=point_labels[ii],
+            )
+        logging.info(f"point prompt processed in {time.time() - starttime} sec.")
 
     img0 = Image.open(image_path)
     render_image = plot_results(img0, inference_state, return_image=True)
@@ -101,15 +119,42 @@ if __name__ == "__main__":
     parser.add_argument(
         "--box-prompt",
         type=float,
-        nargs=4,
+        nargs="+",
         default=None,
         help="box prompt in [topleft_x, topleft_y, width, height] format",
+    )
+    parser.add_argument(
+        "--box-labels",
+        type=int,
+        nargs="+",
+        default=None,
+        help="box labels, 0 or 1.",
+    )
+    parser.add_argument(
+        "--point-prompt",
+        type=float,
+        nargs="+",
+        default=None,
+        help="point prompt in [x, y] format",
+    )
+    parser.add_argument(
+        "--point-labels",
+        type=int,
+        nargs="+",
+        default=None,
+        help="point labels, 0 or 1.",
     )
 
     args = parser.parse_args()
     ConfigLogging()
+    assert args.box_prompt is None or (len(args.box_prompt) // 4) == len(args.box_labels), "if box prompts are defined, box labels must also be provided."
+    assert args.point_prompt is None or (len(args.point_prompt) // 2) == len(args.point_labels), "if point prompts are defined, point labels must also be provided."
+
     _main(
         args.image_path,
         text_prompt=args.text_prompt,
+        point_prompt=args.point_prompt,
+        point_labels=[bool(onelabel) for onelabel in args.point_labels] if args.point_labels else None,
         box_prompt=args.box_prompt,
+        box_labels=[bool(onelabel) for onelabel in args.box_labels] if args.box_labels else None,
     )
