@@ -10,13 +10,11 @@ ENV NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
 ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
 ENV DEBIAN_FRONTEND=noninteractive
 
-# install minimum apps
+# install tools
 RUN apt-get update && apt-get -y install git vim less cmake tmux
-
-# install opencv python
 RUN apt-get update && apt-get install ffmpeg libsm6 libxext6 -y
 
-# install pytorch and useful python packages
+# install python packages
 RUN apt-get update && apt-get install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
@@ -35,11 +33,15 @@ RUN pip install --no-cache-dir --break-system-packages \
     pycocotools \
     seaborn \
     onnxruntime \
-    onnxruntime-openvino
+    onnxruntime-openvino \
+    pycuda
 RUN pip install --no-cache-dir --break-system-packages \
     torch==2.7.0 \
     torchvision==0.22.0 \
     --index-url https://download.pytorch.org/whl/cu128
+
+# install tensorrt
+RUN version="10.9.0.34-1+cuda12.8" && apt install -y libnvinfer10=${version} libnvinfer-lean10=${version} libnvinfer-dispatch10=${version} libnvinfer-plugin10=${version} libnvinfer-vc-plugin10=${version} libnvonnxparsers10=${version} libnvinfer-bin=${version}
 
 # add useful commands to .bashrc
 RUN echo 'alias kk="kill -9 %"' >> ~/.bashrc
