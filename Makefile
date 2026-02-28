@@ -70,28 +70,55 @@ execdocker:
 
 TRT_VERSION ?= 10.9.0.34-1+cuda12.8
 
-.PHONY: installdeps
-installdeps:
+.PHONY: installdeps[infer]
+installdeps[infer]:
 	@set -e; \
-	echo "${COLOR_CYAN}Adding NVIDIA CUDA apt repository...${COLOR_RESET}"; \
-	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb; \
-	dpkg -i cuda-keyring_1.1-1_all.deb; \
-	apt-get update; \
-	echo "${COLOR_CYAN}Installing TensorRT apt packages (version $(TRT_VERSION))...${COLOR_RESET}"; \
-	apt-get install -y \
-	    libnvinfer10=$(TRT_VERSION) \
-	    libnvinfer-lean10=$(TRT_VERSION) \
-	    libnvinfer-dispatch10=$(TRT_VERSION) \
-	    libnvinfer-plugin10=$(TRT_VERSION) \
-	    libnvinfer-vc-plugin10=$(TRT_VERSION) \
-	    libnvonnxparsers10=$(TRT_VERSION) \
-	    libnvinfer-bin=$(TRT_VERSION); \
+	printf "Proceed with TensorRT installation? [y/N] "; \
+	read confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		echo "${COLOR_CYAN}Adding NVIDIA CUDA apt repository...${COLOR_RESET}"; \
+		wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb; \
+		sudo dpkg -i cuda-keyring_1.1-1_all.deb; \
+		sudo apt-get update; \
+		echo "${COLOR_CYAN}Installing TensorRT apt packages (version $(TRT_VERSION))...${COLOR_RESET}"; \
+		echo "apt-get install -y cuda-cudart-dev-12-8 libnvinfer10=$(TRT_VERSION) libnvinfer-lean10=$(TRT_VERSION) libnvinfer-dispatch10=$(TRT_VERSION) libnvinfer-plugin10=$(TRT_VERSION) libnvinfer-vc-plugin10=$(TRT_VERSION) libnvonnxparsers10=$(TRT_VERSION) libnvinfer-bin=$(TRT_VERSION)"; \
+	    sudo apt-get install -y \
+	        cuda-cudart-dev-12-8 \
+	        libnvinfer10=$(TRT_VERSION) \
+	        libnvinfer-lean10=$(TRT_VERSION) \
+	        libnvinfer-dispatch10=$(TRT_VERSION) \
+	        libnvinfer-plugin10=$(TRT_VERSION) \
+	        libnvinfer-vc-plugin10=$(TRT_VERSION) \
+	        libnvonnxparsers10=$(TRT_VERSION) \
+	        libnvinfer-bin=$(TRT_VERSION); \
+	else \
+	    echo "${COLOR_CYAN}Skipping TensorRT installation.${COLOR_RESET}"; \
+	fi; \
 	echo "${COLOR_CYAN}Installing Python deps via uv...${COLOR_RESET}"; \
+	if ! command -v uv > /dev/null 2>&1; then \
+	    echo "${COLOR_CYAN}uv not found, installing...${COLOR_RESET}"; \
+	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
+	    . "$$HOME/.local/bin/env"; \
+	fi; \
+	if [ ! -f /usr/local/cuda/include/cuda.h ]; then \
+	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Install cuda-cudart-dev or check CUDA installation.${COLOR_RESET}"; \
+	    exit 1; \
+	fi; \
+	export CUDA_HOME=/usr/local/cuda; \
+	export CPATH=/usr/local/cuda/include:$$CPATH; \
+	export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH; \
+	uv venv --system-site-packages; \
 	uv sync; \
+	TRT_PY_VERSION=$$(echo "$(TRT_VERSION)" | cut -d'-' -f1); \
+	uv pip install tensorrt==$$TRT_PY_VERSION; \
 	echo "${COLOR_GREEN}All infer deps installed.${COLOR_RESET}"
 
 # use ruff to format, lint python files
 override PYFILES ?= $(shell find ./python -type f -name '*.py')
+
+.PHONY: env[infer]
+shell:
+	uv run bash
 
 .PHONY: formatpy
 formatpy:
