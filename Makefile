@@ -152,6 +152,29 @@ installdeps[infer]:
 # use ruff to format, lint python files
 override PYFILES ?= $(shell find ./python -type f -name '*.py')
 
+.PHONY: download[onnx]
+download[onnx]:
+	@set -e; \
+	if ! command -v uvx > /dev/null 2>&1; then \
+	    echo "${COLOR_CYAN}uvx not found, installing uv...${COLOR_RESET}"; \
+	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
+	    export PATH="$$HOME/.local/bin:$$PATH"; \
+	fi; \
+	uvx huggingface-cli download runiku-boa/sam3_in_trt --local-dir onnx_models
+
+.PHONY: export[trt]
+export[trt]:
+	@set -e; \
+	DEFAULT_ONNX_DIR=/root/code/sam3_in_trt/onnx_models; \
+	DEFAULT_ENGINE_DIR=/root/code/sam3_in_trt/trt_engines; \
+	printf "ONNX directory [$$DEFAULT_ONNX_DIR]: "; \
+	read onnx_dir; \
+	onnx_dir=$${onnx_dir:-$$DEFAULT_ONNX_DIR}; \
+	printf "Engine output directory [$$DEFAULT_ENGINE_DIR]: "; \
+	read engine_dir; \
+	engine_dir=$${engine_dir:-$$DEFAULT_ENGINE_DIR}; \
+	ONNX_DIR="$$onnx_dir" ENGINE_DIR="$$engine_dir" ./scripts/export_trt.sh
+
 .PHONY: env[infer]
 env[infer]:
 	uv run bash
