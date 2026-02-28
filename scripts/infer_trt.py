@@ -21,6 +21,7 @@ Note: Maximum 32 point prompts and 32 box prompts supported.
 import argparse
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import cv2
 from pathlib import Path
@@ -46,18 +47,21 @@ def ConfigLogging():
 class TRTEngine:
     """Generic TensorRT engine wrapper with proper memory management."""
 
-    def __init__(self, engine_path: str):
+    def __init__(self, engine_path: str, engine_bytes: bytes | None = None):
         self.logger = trt.Logger(trt.Logger.WARNING)
         self.name = Path(engine_path).stem
         logging.info(f"Loading TRT engine: {engine_path}")
 
-        with open(engine_path, "rb") as f:
-            runtime = trt.Runtime(self.logger)
-            self.engine = runtime.deserialize_cuda_engine(f.read())
-            assert self.engine is not None, (
-                f"Failed to deserialize engine: {engine_path}. "
-                f"Ensure it was built with the same GPU and TensorRT version."
-            )
+        if engine_bytes is None:
+            with open(engine_path, "rb") as f:
+                engine_bytes = f.read()
+
+        runtime = trt.Runtime(self.logger)
+        self.engine = runtime.deserialize_cuda_engine(engine_bytes)
+        assert self.engine is not None, (
+            f"Failed to deserialize engine: {engine_path}. "
+            f"Ensure it was built with the same GPU and TensorRT version."
+        )
 
         self.context = self.engine.create_execution_context()
         self.stream = cuda.Stream()
@@ -128,21 +132,51 @@ class SAM3TRTPipeline:
 
     def __init__(self, engine_dir: str):
         p = Path(engine_dir)
-        self.image_encoder = TRTEngine(str(p / "backboneImageEncoder.engine"))
-        self.text_encoder = TRTEngine(str(p / "backboneTextEncoder.engine"))
-        self.geometry_encoder = TRTEngine(str(p / "geometryEncoder.engine"))
-        self.transformer = TRTEngine(str(p / "transformer.engine"))
+        ctx = cuda.Context.get_current()
+        names = [
+            "backboneImageEncoder.engine",
+            "backboneTextEncoder.engine",
+            "geometryEncoder.engine",
+            "transformer.engine",
+        ]
+
+        # Loading tensorrt engines in parallel: Phase1 + Phase2
+        starttime = time.time()
+
+        # Phase 1: read all files in parallel (pure I/O, no CUDA)
+        def read_bytes(name):
+            with open(str(p / name), "rb") as f:
+                return f.read()
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            all_bytes = list(ex.map(read_bytes, names))
+        logging.info(f"  File I/O: {(time.time() - starttime) * 1000:.1f} ms")
+
+        # Phase 2: deserialize all engines in parallel (CUDA)
+        t1 = time.time()
+        def deserialize(args):
+            name, data = args
+            ctx.push()
+            try:
+                return TRTEngine(name, engine_bytes=data)
+            finally:
+                ctx.pop()
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            engines = list(ex.map(deserialize, zip(names, all_bytes)))
+        logging.info(f"  Deserialize: {(time.time() - t1) * 1000:.1f} ms")
+
+        self.image_encoder, self.text_encoder, self.geometry_encoder, self.transformer = engines
+        logging.info(f"Engine loading total: {(time.time() - starttime) * 1000:.1f} ms")
 
         # Load CLIP tokenizer
         self.tokenizer = self._load_tokenizer()
 
     def _load_tokenizer(self):
         """Load the CLIP BPE tokenizer."""
-        from sam3.model.tokenizer_ve import SimpleTokenizer
-        import sam3
+        from text_tokenizer import SimpleTokenizer
         import os
-        sam3_root = os.path.join(os.path.dirname(sam3.__file__), "..")
-        bpe_path = f"{sam3_root}/sam3/assets/bpe_simple_vocab_16e6.txt.gz"
+        bpe_path = os.path.join(os.path.dirname(__file__), "..", "sam3", "sam3", "assets", "bpe_simple_vocab_16e6.txt.gz")
         return SimpleTokenizer(bpe_path=bpe_path)
 
     # ── Preprocessing ────────────────────────────────────────────
@@ -189,7 +223,7 @@ class SAM3TRTPipeline:
             tokens: [1, 32] int64/int32 array
         """
         tokens = self.tokenizer([text], context_length=context_length)
-        return tokens.numpy()
+        return tokens
 
     def prepare_geometry_inputs(
         self,
