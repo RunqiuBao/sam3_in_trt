@@ -1,4 +1,4 @@
-name: Test SAM3 TRT Inference
+name: Test installdeps
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test-infer:
-    runs-on: [self-hosted, gpu]
+  test-installdeps:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
