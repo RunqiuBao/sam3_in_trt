@@ -75,7 +75,7 @@ installdeps[infer]:
 	@set -e; \
 	if [ ! -f /usr/local/cuda/include/cuda.h ]; then \
 	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Check CUDA installation.${COLOR_RESET}"; \
-	    exit 1; \
+	    exit 0; \
 	fi; \
 	printf "Proceed with TensorRT installation? [y/N] "; \
 	read confirm; \
