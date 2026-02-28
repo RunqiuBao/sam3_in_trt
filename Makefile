@@ -98,7 +98,7 @@ installdeps[infer]:
 	if ! command -v uv > /dev/null 2>&1; then \
 	    echo "${COLOR_CYAN}uv not found, installing...${COLOR_RESET}"; \
 	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
-	    . "$$HOME/.local/bin/env"; \
+	    export PATH="$$HOME/.local/bin:$$PATH"; \
 	fi; \
 	if [ ! -f /usr/local/cuda/include/cuda.h ]; then \
 	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Install cuda-cudart-dev or check CUDA installation.${COLOR_RESET}"; \
