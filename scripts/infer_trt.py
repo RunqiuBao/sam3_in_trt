@@ -176,7 +176,7 @@ class SAM3TRTPipeline:
         """Load the CLIP BPE tokenizer."""
         from text_tokenizer import SimpleTokenizer
         import os
-        bpe_path = os.path.join(os.path.dirname(__file__), "..", "sam3", "sam3", "assets", "bpe_simple_vocab_16e6.txt.gz")
+        bpe_path = os.path.join(os.path.dirname(__file__), "..", "assets", "bpe_simple_vocab_16e6.txt.gz")
         return SimpleTokenizer(bpe_path=bpe_path)
 
     # ── Preprocessing ────────────────────────────────────────────
