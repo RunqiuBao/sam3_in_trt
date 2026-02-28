@@ -101,17 +101,18 @@ installdeps[infer]:
 	    export PATH="$$HOME/.local/bin:$$PATH"; \
 	fi; \
 	if [ ! -f /usr/local/cuda/include/cuda.h ]; then \
-	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Install cuda-cudart-dev or check CUDA installation.${COLOR_RESET}"; \
+	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Check CUDA installation.${COLOR_RESET}"; \
 	    exit 1; \
-	fi; \
-	export CUDA_HOME=/usr/local/cuda; \
-	export CPATH=/usr/local/cuda/include:$$CPATH; \
-	export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH; \
-	uv venv --system-site-packages; \
-	uv sync; \
-	TRT_PY_VERSION=$$(echo "$(TRT_VERSION)" | cut -d'-' -f1); \
-	uv pip install tensorrt==$$TRT_PY_VERSION; \
-	echo "${COLOR_GREEN}All infer deps installed.${COLOR_RESET}"
+	else \
+	    export CUDA_HOME=/usr/local/cuda; \
+	    export CPATH=/usr/local/cuda/include:$$CPATH; \
+	    export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH; \
+	    uv venv --system-site-packages; \
+	    uv sync; \
+	    TRT_PY_VERSION=$$(echo "$(TRT_VERSION)" | cut -d'-' -f1); \
+	    uv pip install tensorrt==$$TRT_PY_VERSION; \
+	    echo "${COLOR_GREEN}All infer deps installed.${COLOR_RESET}"; \
+	fi
 
 # use ruff to format, lint python files
 override PYFILES ?= $(shell find ./python -type f -name '*.py')
