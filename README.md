@@ -3,7 +3,7 @@
 <br>
 
 Convert Meta's [Segment Anything Model 3 (SAM 3)](https://github.com/facebookresearch/sam3) to TensorRT for optimized inference on NVIDIA GPUs.
-- Image predictor inference constructs and finishes in 2 seconds.
+- Image predictor inference constructs and finishes in 2 seconds (Nvidia RTX3090).
 ```
 2026-03-01 00:28:24,471 - INFO - infer_trt.py:153 -   File I/O: 519.8 ms
 ...
