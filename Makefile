@@ -73,34 +73,70 @@ TRT_VERSION ?= 10.9.0.34-1+cuda12.8
 .PHONY: installdeps[infer]
 installdeps[infer]:
 	@set -e; \
+	echo "${COLOR_CYAN}[1/4] Checking environment...${COLOR_RESET}"; \
+	echo "      TRT_VERSION: $(TRT_VERSION)"; \
+	OS_ID=$$(lsb_release -is | tr '[:upper:]' '[:lower:]'); \
+	OS_VERSION=$$(lsb_release -rs); \
+	TRT_PY_VERSION=$$(echo "$(TRT_VERSION)" | cut -d'-' -f1); \
+	echo "      OS: $${OS_ID} $${OS_VERSION}"; \
 	if [ ! -f /usr/local/cuda/include/cuda.h ]; then \
-	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Check CUDA installation.${COLOR_RESET}"; \
+	    echo "${COLOR_RED}      cuda.h not found at /usr/local/cuda/include/cuda.h. Check CUDA installation.${COLOR_RESET}"; \
 	    exit 0; \
 	fi; \
-	printf "Proceed with TensorRT installation? [y/N] "; \
-	read confirm; \
-	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-		echo "${COLOR_CYAN}Adding NVIDIA CUDA apt repository...${COLOR_RESET}"; \
-		wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb; \
-		sudo dpkg -i cuda-keyring_1.1-1_all.deb; \
-		sudo apt-get update; \
-		echo "${COLOR_CYAN}Installing TensorRT apt packages (version $(TRT_VERSION))...${COLOR_RESET}"; \
-		echo "apt-get install -y cuda-cudart-dev-12-8 libnvinfer10=$(TRT_VERSION) libnvinfer-lean10=$(TRT_VERSION) libnvinfer-dispatch10=$(TRT_VERSION) libnvinfer-plugin10=$(TRT_VERSION) libnvinfer-vc-plugin10=$(TRT_VERSION) libnvonnxparsers10=$(TRT_VERSION) libnvinfer-bin=$(TRT_VERSION)"; \
-	    sudo apt-get install -y \
-	        cuda-cudart-dev-12-8 \
-	        libnvinfer10=$(TRT_VERSION) \
-	        libnvinfer-lean10=$(TRT_VERSION) \
-	        libnvinfer-dispatch10=$(TRT_VERSION) \
-	        libnvinfer-plugin10=$(TRT_VERSION) \
-	        libnvinfer-vc-plugin10=$(TRT_VERSION) \
-	        libnvonnxparsers10=$(TRT_VERSION) \
-	        libnvinfer-bin=$(TRT_VERSION); \
+	echo "      CUDA: OK (/usr/local/cuda)"; \
+	if [ "$${OS_ID}" = "ubuntu" ]; then \
+	    echo "${COLOR_CYAN}[2/4] Installing TensorRT system packages via apt (Ubuntu)...${COLOR_RESET}"; \
+	    printf "      Proceed? [y/N] "; \
+	    read confirm; \
+	    if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+	        UBUNTU_CODENAME=$$(echo "$${OS_VERSION}" | tr -d '.'); \
+	        wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$${UBUNTU_CODENAME}/x86_64/cuda-keyring_1.1-1_all.deb; \
+	        sudo dpkg -i cuda-keyring_1.1-1_all.deb; \
+	        sudo apt-get update -q; \
+	        sudo apt-get install -y \
+	            cuda-cudart-dev-12-8 \
+	            libnvinfer10=$(TRT_VERSION) \
+	            libnvinfer-lean10=$(TRT_VERSION) \
+	            libnvinfer-dispatch10=$(TRT_VERSION) \
+	            libnvinfer-plugin10=$(TRT_VERSION) \
+	            libnvinfer-vc-plugin10=$(TRT_VERSION) \
+	            libnvonnxparsers10=$(TRT_VERSION) \
+	            libnvinfer-bin=$(TRT_VERSION); \
+	        echo "      TensorRT apt packages installed."; \
+	    else \
+	        echo "      Skipped."; \
+	    fi; \
+	elif [ "$${OS_ID}" = "debian" ]; then \
+	    echo "${COLOR_CYAN}[2/4] Installing TensorRT system packages via apt (Debian)...${COLOR_RESET}"; \
+	    printf "      Proceed? [y/N] "; \
+	    read confirm; \
+	    if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+	        if [ "$${OS_VERSION}" = "13" ]; then \
+	            echo "${COLOR_RED}      Debian 13 is not supported: NVIDIA's repo uses SHA1 signatures, which Debian 13 rejects. Install TensorRT manually.${COLOR_RESET}"; \
+	            exit 1; \
+	        fi; \
+	        wget -q https://developer.download.nvidia.com/compute/cuda/repos/debian$${OS_VERSION}/x86_64/cuda-keyring_1.1-1_all.deb; \
+	        sudo dpkg -i cuda-keyring_1.1-1_all.deb; \
+	        sudo apt-get update -q; \
+	        sudo apt-get install -y \
+	            libnvinfer10=$(TRT_VERSION) \
+	            libnvinfer-lean10=$(TRT_VERSION) \
+	            libnvinfer-dispatch10=$(TRT_VERSION) \
+	            libnvinfer-plugin10=$(TRT_VERSION) \
+	            libnvinfer-vc-plugin10=$(TRT_VERSION) \
+	            libnvonnxparsers10=$(TRT_VERSION) \
+	            libnvinfer-bin=$(TRT_VERSION); \
+	        echo "      TensorRT apt packages installed."; \
+	    else \
+	        echo "      Skipped."; \
+	    fi; \
 	else \
-	    echo "${COLOR_CYAN}Skipping TensorRT installation.${COLOR_RESET}"; \
+	    echo "${COLOR_RED}      Unsupported OS: $${OS_ID}. Only Ubuntu and Debian are supported.${COLOR_RESET}"; \
+	    exit 0; \
 	fi; \
-	echo "${COLOR_CYAN}Installing Python deps via uv...${COLOR_RESET}"; \
+	echo "${COLOR_CYAN}[3/4] Installing uv and Python deps...${COLOR_RESET}"; \
 	if ! command -v uv > /dev/null 2>&1; then \
-	    echo "${COLOR_CYAN}uv not found, installing...${COLOR_RESET}"; \
+	    echo "      uv not found, installing..."; \
 	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	    export PATH="$$HOME/.local/bin:$$PATH"; \
 	fi; \
@@ -109,15 +145,15 @@ installdeps[infer]:
 	export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH; \
 	uv venv --system-site-packages; \
 	uv sync; \
-	TRT_PY_VERSION=$$(echo "$(TRT_VERSION)" | cut -d'-' -f1); \
+	echo "${COLOR_CYAN}[4/4] Installing TensorRT Python package (tensorrt==$${TRT_PY_VERSION})...${COLOR_RESET}"; \
 	uv pip install tensorrt==$$TRT_PY_VERSION; \
-	echo "${COLOR_GREEN}All infer deps installed.${COLOR_RESET}"
+	echo "${COLOR_GREEN}Done. All infer deps installed.${COLOR_RESET}"
 
 # use ruff to format, lint python files
 override PYFILES ?= $(shell find ./python -type f -name '*.py')
 
 .PHONY: env[infer]
-shell:
+env[infer]:
 	uv run bash
 
 .PHONY: formatpy
