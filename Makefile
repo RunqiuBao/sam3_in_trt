@@ -68,6 +68,28 @@ execdocker:
 	fi; \
 	docker exec -it ${CONTAINER_NAME} /bin/bash
 
+TRT_VERSION ?= 10.9.0.34-1+cuda12.8
+
+.PHONY: installdeps
+installdeps:
+	@set -e; \
+	echo "${COLOR_CYAN}Adding NVIDIA CUDA apt repository...${COLOR_RESET}"; \
+	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb; \
+	dpkg -i cuda-keyring_1.1-1_all.deb; \
+	apt-get update; \
+	echo "${COLOR_CYAN}Installing TensorRT apt packages (version $(TRT_VERSION))...${COLOR_RESET}"; \
+	apt-get install -y \
+	    libnvinfer10=$(TRT_VERSION) \
+	    libnvinfer-lean10=$(TRT_VERSION) \
+	    libnvinfer-dispatch10=$(TRT_VERSION) \
+	    libnvinfer-plugin10=$(TRT_VERSION) \
+	    libnvinfer-vc-plugin10=$(TRT_VERSION) \
+	    libnvonnxparsers10=$(TRT_VERSION) \
+	    libnvinfer-bin=$(TRT_VERSION); \
+	echo "${COLOR_CYAN}Installing Python deps via uv...${COLOR_RESET}"; \
+	uv sync; \
+	echo "${COLOR_GREEN}All infer deps installed.${COLOR_RESET}"
+
 # use ruff to format, lint python files
 override PYFILES ?= $(shell find ./python -type f -name '*.py')
 
