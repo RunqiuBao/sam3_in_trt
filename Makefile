@@ -73,6 +73,10 @@ TRT_VERSION ?= 10.9.0.34-1+cuda12.8
 .PHONY: installdeps[infer]
 installdeps[infer]:
 	@set -e; \
+	if [ ! -f /usr/local/cuda/include/cuda.h ]; then \
+	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Check CUDA installation.${COLOR_RESET}"; \
+	    exit 1; \
+	fi; \
 	printf "Proceed with TensorRT installation? [y/N] "; \
 	read confirm; \
 	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
@@ -100,19 +104,14 @@ installdeps[infer]:
 	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	    export PATH="$$HOME/.local/bin:$$PATH"; \
 	fi; \
-	if [ ! -f /usr/local/cuda/include/cuda.h ]; then \
-	    echo "${COLOR_RED}cuda.h not found at /usr/local/cuda/include/cuda.h. Check CUDA installation.${COLOR_RESET}"; \
-	    exit 1; \
-	else \
-	    export CUDA_HOME=/usr/local/cuda; \
-	    export CPATH=/usr/local/cuda/include:$$CPATH; \
-	    export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH; \
-	    uv venv --system-site-packages; \
-	    uv sync; \
-	    TRT_PY_VERSION=$$(echo "$(TRT_VERSION)" | cut -d'-' -f1); \
-	    uv pip install tensorrt==$$TRT_PY_VERSION; \
-	    echo "${COLOR_GREEN}All infer deps installed.${COLOR_RESET}"; \
-	fi
+	export CUDA_HOME=/usr/local/cuda; \
+	export CPATH=/usr/local/cuda/include:$$CPATH; \
+	export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH; \
+	uv venv --system-site-packages; \
+	uv sync; \
+	TRT_PY_VERSION=$$(echo "$(TRT_VERSION)" | cut -d'-' -f1); \
+	uv pip install tensorrt==$$TRT_PY_VERSION; \
+	echo "${COLOR_GREEN}All infer deps installed.${COLOR_RESET}"
 
 # use ruff to format, lint python files
 override PYFILES ?= $(shell find ./python -type f -name '*.py')
