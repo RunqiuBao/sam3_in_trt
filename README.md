@@ -1,90 +1,50 @@
-# SAM 3 → TensorRT Conversion Pipeline
+# SAM3 in TensorRT format
 
 Convert Meta's [Segment Anything Model 3 (SAM 3)](https://github.com/facebookresearch/sam3) to TensorRT for optimized inference on NVIDIA GPUs.
+- Image predictor inference constructs and finishes in 2 seconds.
+```
+2026-03-01 00:28:24,471 - INFO - infer_trt.py:153 -   File I/O: 519.8 ms
+...
+2026-03-01 00:28:26,674 - INFO - infer_trt.py:591 - Saved: IMG_2146_sam3_output.jpg
+```
 
-SAM 3 is a unified foundation model for promptable segmentation using text or visual prompts. It has 848M parameters with a DETR-based detector and SAM 2-style tracker sharing a vision encoder.
-
-## Pipeline
-
-1. **Download** SAM 3 checkpoints from HuggingFace (requires auth)
-2. **Export** PyTorch model → ONNX (vision encoder + detector)
-3. **Convert** ONNX → TensorRT engine
-4. **Run** inference with TensorRT
-
-## Requirements
-
-- Python 3.12+
-- PyTorch 2.7+ with CUDA support
-- CUDA 12.6+
-- TensorRT 10.x
-- HuggingFace account with SAM 3 checkpoint access
+## Installation for inference
+(make sure CUDA and TensorRT are installed in the os.)
+- `git clone git@github.com:RunqiuBao/sam3_in_trt.git && cd sam3_in_trt/`
+- `make installdeps[infer]`
+- `make env[infer]`
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+# Download onnx model
+cd sam3_in_trt/ && mkdir onnx_models/ && mkdir trt_engines/
+make download[onnx]
 
-# 2. Authenticate with HuggingFace
-huggingface-cli login
+# Convert onnx model to tensorrt engines
+make export[trt]
 
-# 3. Export vision encoder to ONNX
-python scripts/export_onnx.py \
-    --component vision_encoder \
-    --output models/sam3_vision_encoder.onnx
+# inference examples
+python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_4456.jpg --text "bunny"
 
-# 4. Export detector to ONNX
-python scripts/export_onnx.py \
-    --component detector \
-    --output models/sam3_detector.onnx
+python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_4713.jpg --text "robot"
 
-# 5. Build TensorRT engines
-python scripts/build_trt_engine.py \
-    --onnx models/sam3_vision_encoder.onnx \
-    --output engines/sam3_vision_encoder.engine \
-    --fp16
+python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_5078.jpg --text "face"
 
-python scripts/build_trt_engine.py \
-    --onnx models/sam3_detector.onnx \
-    --output engines/sam3_detector.engine \
-    --fp16
-
-# 6. Run inference
-python scripts/infer_trt.py \
-    --encoder-engine engines/sam3_vision_encoder.engine \
-    --detector-engine engines/sam3_detector.engine \
-    --image test_images/example.jpg \
-    --text "dog"
+python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_2146.jpeg --text "female human" --points 622,966 330,780 328,864 700,790 684,826 --point-labels 1 0 0 0 0
 ```
+<table>
+<tr>
+    <td><img src="assets/readme/IMG_2146_sam3_output.jpg" width="200"/></td>
+    <td><img src="assets/readme/IMG_4713_sam3_output.jpg" width="200"/></td>
+    <td><img src="assets/readme/IMG_4456_sam3_output.jpg" width="200"/></td>                                                        
+    <td><img src="assets/readme/IMG_5078_sam3_output.jpg" width="200"/></td>
+</tr>
+</table>
 
-## Project Structure
 
-```
-sam3_in_trt/
-├── README.md
-├── requirements.txt
-├── configs/
-│   └── sam3_trt.yaml          # Model & engine config
-├── scripts/
-│   ├── export_onnx.py         # PyTorch → ONNX export
-│   ├── build_trt_engine.py    # ONNX → TensorRT conversion
-│   └── infer_trt.py           # TensorRT inference
-├── models/                    # ONNX models (gitignored)
-├── engines/                   # TensorRT engines (gitignored)
-└── test_images/               # Sample images
-```
 
-## Architecture Notes
-
-SAM 3 has three main components:
-- **Vision encoder** — shared backbone (heavy, best TRT target)
-- **Detector** — DETR-based, conditioned on text/geometry/exemplars (good TRT target)
-- **Tracker** — SAM 2-style encoder-decoder for video (stateful, harder to convert)
-
-Strategy: convert vision encoder + detector to TRT. Keep tracker in PyTorch for video use cases (stateful memory makes TRT tricky).
-
-## Notes
-
-- Checkpoints require HuggingFace access: https://huggingface.co/facebook/sam3
-- FP16 gives ~2x speedup with minimal accuracy loss on the vision encoder
-- The presence token (new in SAM 3) helps discriminate similar text prompts
+## Set up dev environment
+- `make builddocker`
+- `make rundocker`
+- `make execdocker`
