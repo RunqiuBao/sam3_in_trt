@@ -1,0 +1,23 @@
+name: Test SAM3 TRT Inference
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-infer:
+    runs-on: [self-hosted, gpu]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install deps
+        run: echo "Y" | make installdeps[infer]
+
+      - name: Test uv env
+        run: make env[infer]
