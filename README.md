@@ -1,4 +1,6 @@
 # SAM3 in TensorRT format
+[![CI Test](https://github.com/RunqiuBao/sam3_in_trt/actions/workflows/test_installdeps.yml/badge.svg)](https://github.com/RunqiuBao/sam3_in_trt/actions/workflows/test_installdeps.yml)
+<br>
 
 Convert Meta's [Segment Anything Model 3 (SAM 3)](https://github.com/facebookresearch/sam3) to TensorRT for optimized inference on NVIDIA GPUs.
 - Image predictor inference constructs and finishes in 2 seconds.
