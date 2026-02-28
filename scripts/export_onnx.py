@@ -7,6 +7,16 @@ SAM 3 architecture:
   - Tracker (SAM 2-style, stateful — not exported here)
 
 Requires HuggingFace auth: `huggingface-cli login`
+
+Usage:
+  # Export everything (default)
+  python export_sam3_onnx.py --output ./onnx_out
+
+  # Export only specific networks
+  python export_sam3_onnx.py --output ./onnx_out --networks backboneImageEncoder backboneTextEncoder
+
+  # List available networks
+  python export_sam3_onnx.py --list-networks
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING
@@ -19,6 +29,8 @@ import numpy as np
 from pathlib import Path
 import logging
 from torchvision.transforms import v2
+import onnx
+from onnx import numpy_helper
 
 from sam3 import build_sam3_image_model
 from sam3.model.tokenizer_ve import SimpleTokenizer
@@ -26,6 +38,15 @@ import sam3
 if TYPE_CHECKING:
     from sam3.model.sam3_image import Sam3Image
     from sam3.model.vl_combiner import SAM3VLBackbone
+
+
+# Registry of all exportable networks
+EXPORTABLE_NETWORKS = [
+    "backboneImageEncoder",
+    "backboneTextEncoder",
+    "geometryEncoder",
+    "transformerDetector",
+]
 
 
 def ConfigLogging():
@@ -50,7 +71,64 @@ class BackboneImageEncoderWrapper(torch.nn.Module):
         Returns:
             Vision features for detector/tracker consumption
         """
-        return self.sam3_backbone.forward_image(image)
+        output = self.sam3_backbone.forward_image(image)
+        return {
+            "vision_pos_enc0": output['vision_pos_enc'][0],
+            "vision_pos_enc1": output['vision_pos_enc'][1],
+            "vision_pos_enc2": output['vision_pos_enc'][2],
+            "backbone_fpn0": output['backbone_fpn'][0],
+            "backbone_fpn1": output['backbone_fpn'][1],
+            "backbone_fpn2": output['backbone_fpn'][2],
+        }
+
+
+def export_backboneImageEncoder(
+    sam3_model_backbone: SAM3VLBackbone,
+    image_size: tuple[int],
+    output_path: Path,
+    opset: int,
+):
+    device = next(sam3_model_backbone.parameters()).device
+    model_image_resolution: int = 1008
+    transform = v2.Compose(
+        [
+            v2.ToDtype(torch.uint8, scale=True),
+            v2.Resize(size=(model_image_resolution, model_image_resolution)),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ]
+    )
+    dummy_image = torch.randn(3, image_size[0], image_size[1], device=device)
+    dummy_image = transform(dummy_image).unsqueeze(0)
+    backboneImageWrapper = BackboneImageEncoderWrapper(sam3_model_backbone).to(device)
+    backboneImageWrapper.eval()
+    onnx_model_path = str(output_path / "backboneImageEncoder.onnx")
+    with torch.no_grad():
+        torch.onnx.export(
+            backboneImageWrapper,
+            dummy_image,
+            onnx_model_path,
+            opset_version=opset,
+            input_names=["image"],
+            output_names=[
+                "vision_pos_enc0",
+                "vision_pos_enc1",
+                "vision_pos_enc2",
+                "backbone_fpn0",
+                "backbone_fpn1",
+                "backbone_fpn2",
+            ],
+            dynamic_axes={
+                "image": {0: "batch_size"},
+                "vision_pos_enc0": {0: "batch_size"},
+                "vision_pos_enc1": {0: "batch_size"},
+                "vision_pos_enc2": {0: "batch_size"},
+                "backbone_fpn0": {0: "batch_size"},
+                "backbone_fpn1": {0: "batch_size"},
+                "backbone_fpn2": {0: "batch_size"},
+            },
+        )
+    return
 
 
 class BackboneTextEncoderWrapper(torch.nn.Module):
@@ -76,10 +154,48 @@ class BackboneTextEncoderWrapper(torch.nn.Module):
         text_embeds = text_embeds[:, :1]
         output["language_features"] = text_memory
         output["language_mask"] = text_attention_mask
-        output["language_embeds"] = (
-            text_embeds  # Text embeddings before forward to the encoder
-        )
+        output["language_embeds"] = text_embeds  # Text embeddings before forward to the encoder
         return output
+
+
+def export_backboneTextEncoder(
+    sam3_model_backbone: SAM3VLBackbone,
+    caption: str,
+    tokenizer: SimpleTokenizer,
+    output_path: Path,
+    opset: int,
+):
+    device = next(sam3_model_backbone.parameters()).device
+    context_length = 32  # Note: as in CLIP.
+    backboneTextWrapper = BackboneTextEncoderWrapper(sam3_model_backbone).to(device)
+    backboneTextWrapper.eval()
+    onnx_model_path = str(output_path / "backboneTextEncoder.onnx")
+
+    # Encode the text
+    tokenized = tokenizer(
+        [caption],
+        context_length=context_length,
+    ).to(device)  # [b, seq_len]
+    with torch.no_grad():
+        torch.onnx.export(
+            backboneTextWrapper,
+            tokenized,
+            onnx_model_path,
+            opset_version=opset,
+            input_names=["text_tokens"],
+            output_names=[
+                "language_features",
+                "language_mask",
+                "language_embeds",
+            ],
+            dynamic_axes={
+                "text_tokens": {0: "batch_size"},
+                "language_features": {0: "xt", 1: "batch_size"},
+                "language_mask": {0: "batch_size", 1: "xt"},
+                "language_embeds": {0: "xt", 1: "batch_size"},
+            }
+        )
+    return
 
 
 class GeometryEncoderWrapper(torch.nn.Module):
@@ -123,114 +239,6 @@ class GeometryEncoderWrapper(torch.nn.Module):
         )
 
 
-class TransformerDetectorWrapper(torch.nn.Module):
-    """
-    Wrap transformer detector network for clean ONNX export.
-    """
-    def __init__(self, sam3: Sam3Image):
-        super().__init__()
-        self.sam3_model = sam3
-
-    def forward(
-        self,
-        backbone_fpn_0: torch.Tensor,
-        backbone_fpn_1:  torch.Tensor,
-        backbone_fpn_2: torch.Tensor,  # (b, space, res, res)
-        vision_pos_enc_2: torch.Tensor,  # (b, space, res, res)
-        prompt: torch.Tensor,  # (xp, b, space)
-        prompt_mask: torch.Tensor,  # (b, xp)
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            ...
-        Returns:
-            ...
-        """
-        return self.sam3_model.forward_grounding_transformerDetector_onnx(
-            backbone_fpn_0,
-            backbone_fpn_1,
-            backbone_fpn_2,  # (b, space, res, res)
-            vision_pos_enc_2,  # (b, space, res, res)
-            prompt,  # (xp, b, space)
-            prompt_mask,  # (b, xp)
-        )
-
-
-class DetectorWrapper(torch.nn.Module):
-    """Wraps SAM 3 DETR-based detector for ONNX export.
-
-    Note: text conditioning requires pre-computed text embeddings.
-    Export the detector with dummy text embeddings; at runtime,
-    compute text embeddings separately and feed them in.
-    """
-
-    def __init__(self, sam3_model):
-        super().__init__()
-        self.detector = sam3_model.detector
-
-    def forward(self, vision_features: torch.Tensor, text_embeddings: torch.Tensor):
-        """
-        Args:
-            vision_features: output from vision encoder
-            text_embeddings: pre-computed text prompt embeddings
-        Returns:
-            boxes, masks, scores, presence logits
-        """
-        return self.detector(vision_features, text_embeddings)
-
-
-def export_transformerDetector(
-    sam3_model: Sam3Image,
-    output_path: Path,
-    opset: int,
-):
-    device = next(sam3_model.parameters()).device
-    transformer = TransformerDetectorWrapper(sam3_model).to(device)
-    transformer.eval()
-    onnx_model_path = str(output_path / "transformer.onnx")
-    with torch.no_grad():
-        torch.onnx.export(
-            transformer,
-            (
-                torch.rand(1, 256, 288, 288).to(device),
-                torch.rand(1, 256, 144, 144).to(device),
-                torch.rand(1, 256, 72, 72).to(device),
-                torch.rand(1, 256, 72, 72).to(device),
-                torch.rand(36, 1, 256).to(device),
-                torch.randint(0, 2, (1, 36)).bool().to(device)
-            ),
-            onnx_model_path,
-            opset_version=opset,
-            dynamo=False,  # Note: dynamo gives an error about aten_split
-            input_names=[
-                "backbone_fpn_0",
-                "backbone_fpn_1",
-                "backbone_fpn_2",
-                "vision_pos_enc_2",
-                "prompt",
-                "prompt_mask",
-            ],
-            output_names=[
-                "pred_boxes",
-                "pred_logits",
-                "pred_masks",
-                "presence_logit_dec",
-            ],
-            dynamic_axes={
-                "backbone_fpn_0": {0: "batch_size"},
-                "backbone_fpn_1": {0: "batch_size"},
-                "backbone_fpn_2": {0: "batch_size"},
-                "vision_pos_enc_2": {0: "batch_size"},
-                "prompt": {0: "xp", 1: "batch_size"},
-                "prompt_mask": {0: "batch_size", 1: "xp"},
-                "pred_boxes": {0: "batch_size"},
-                "pred_logits": {0: "batch_size"},
-                "pred_masks": {0: "batch_size"},
-                "presence_logit_dec": {0: "batch_size"},
-            },
-        )
-
-
 def export_geometryEncoder(
     sam3_model: Sam3Image,
     output_path: Path,
@@ -240,16 +248,24 @@ def export_geometryEncoder(
     geometryEncoder = GeometryEncoderWrapper(sam3_model).to(device)
     geometryEncoder.eval()
     onnx_model_path = str(output_path / "geometryEncoder.onnx")
+    max_num_points = 32
+    max_num_boxes = 32
+    points_mask = torch.zeros(1, max_num_points, device=device, dtype=torch.bool)
+    rand_padding = torch.randint(0, max_num_points + 1, (1,)).item()
+    points_mask[:, -rand_padding:] = 1
+    boxes_mask = torch.zeros(1, max_num_boxes, device=device, dtype=torch.bool)
+    rand_padding = torch.randint(0, max_num_boxes + 1, (1,)).item()
+    boxes_mask[:, -rand_padding:] = 1
     with torch.no_grad():
         torch.onnx.export(
             geometryEncoder,
             (
-                torch.rand(1, 1, 2).to(device),
-                torch.rand(1, 1).to(device),
-                torch.rand(1, 1).to(device),
-                torch.rand(1, 1, 4).to(device),
-                torch.rand(1, 1).to(device),
-                torch.rand(1, 1).to(device),
+                torch.rand(max_num_points, 1, 2).to(device),
+                points_mask,
+                torch.randint(0, 2, (max_num_points, 1)).to(device),
+                torch.rand(max_num_boxes, 1, 4).to(device),
+                boxes_mask,
+                torch.randint(0, 2, (max_num_boxes, 1)).to(device),
                 torch.rand(72, 72, 1, 256).to(device),  # Note: sam3 default params
                 torch.rand(72, 72, 1, 256).to(device),
             ),
@@ -286,96 +302,143 @@ def export_geometryEncoder(
     return
 
 
-def export_backboneTextEncoder(
-    sam3_model_backbone: SAM3VLBackbone,
-    caption: str,
-    tokenizer: SimpleTokenizer,
-    output_path: Path,
-    opset: int,
-):
-    device = next(sam3_model_backbone.parameters()).device
-    context_length = 32  # Note: as in CLIP.
-    backboneTextWrapper = BackboneTextEncoderWrapper(sam3_model_backbone).to(device)
-    backboneTextWrapper.eval()
-    onnx_model_path = str(output_path / "backboneTextEncoder.onnx")
+class TransformerDetectorWrapper(torch.nn.Module):
+    """
+    Wrap transformer detector network for clean ONNX export.
+    """
+    def __init__(self, sam3: Sam3Image):
+        super().__init__()
+        self.sam3_model = sam3
 
-    # Encode the text
-    tokenized = tokenizer(
-        [caption],
-        context_length=context_length,
-    ).to(device)  # [b, seq_len]
-    with torch.no_grad():
-        torch.onnx.export(
-            backboneTextWrapper,
-            tokenized,
-            onnx_model_path,
-            opset_version=opset,
-            input_names=["text_tokens"],
-            output_names=[
-                "text_attention_mask",
-                "text_memory_resized",
-                "inputs_embeds",
-            ],
-            dynamic_axes={
-                "text_tokens": {0: "batch_size"},
-                "text_attention_mask": {0: "batch_size"},
-                "text_memory_resized": {1: "batch_size"},
-                "inputs_embeds": {1: "batch_size"},
-            }
+    def forward(
+        self,
+        backbone_fpn_0: torch.Tensor,
+        backbone_fpn_1:  torch.Tensor,
+        backbone_fpn_2: torch.Tensor,  # (b, space, res, res)
+        vision_pos_enc_2: torch.Tensor,  # (b, space, res, res)
+        prompt: torch.Tensor,  # (xp, b, space)
+        prompt_mask: torch.Tensor,  # (b, xp)
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            ...
+        Returns:
+            ...
+        """
+        return self.sam3_model.forward_grounding_transformerDetector_onnx(
+            backbone_fpn_0,
+            backbone_fpn_1,
+            backbone_fpn_2,  # (b, space, res, res)
+            vision_pos_enc_2,  # (b, space, res, res)
+            prompt,  # (xp, b, space)
+            prompt_mask,  # (b, xp)
         )
-    return
 
 
-def export_backboneImageEncoder(
-    sam3_model_backbone: SAM3VLBackbone,
-    dummy_image: torch.Tensor,
+def export_transformerDetector(
+    sam3_model: Sam3Image,
     output_path: Path,
     opset: int,
 ):
-    device = next(sam3_model_backbone.parameters()).device
-    backboneImageWrapper = BackboneImageEncoderWrapper(sam3_model_backbone).to(device)
-    backboneImageWrapper.eval()
-    onnx_model_path = str(output_path / "backboneImageEncoder.onnx")
+    device = next(sam3_model.parameters()).device
+    transformer = TransformerDetectorWrapper(sam3_model).to(device)
+    transformer.eval()
+    onnx_model_path = str(output_path / "transformer.onnx")
     with torch.no_grad():
         torch.onnx.export(
-            backboneImageWrapper,
-            dummy_image,
+            transformer,
+            (
+                torch.rand(1, 256, 288, 288).to(device),
+                torch.rand(1, 256, 144, 144).to(device),
+                torch.rand(1, 256, 72, 72).to(device),
+                torch.rand(1, 256, 72, 72).to(device),
+                torch.rand(97, 1, 256).to(device),
+                torch.randint(0, 2, (1, 97)).bool().to(device)
+            ),
             onnx_model_path,
             opset_version=opset,
-            input_names=["image"],
+            dynamo=False,  # Note: dynamo gives an error about aten_split
+            input_names=[
+                "backbone_fpn_0",
+                "backbone_fpn_1",
+                "backbone_fpn_2",
+                "vision_pos_enc_2",
+                "prompt",
+                "prompt_mask",
+            ],
             output_names=[
-                "vision_features",
-                "vision_pos_enc0",
-                "vision_pos_enc1",
-                "vision_pos_enc2",
-                "backbone_fpn0",
-                "backbone_fpn1",
-                "backbone_fpn2",
+                "pred_boxes",
+                "pred_logits",
+                "pred_masks",
+                "presence_logit_dec",
             ],
             dynamic_axes={
-                "image": {0: "batch_size"},
-                "vision_features": {0: "batch_size"},
-                "vision_pos_enc0": {0: "batch_size"},
-                "vision_pos_enc1": {0: "batch_size"},
-                "vision_pos_enc2": {0: "batch_size"},
-                "backbone_fpn0": {0: "batch_size"},
-                "backbone_fpn1": {0: "batch_size"},
-                "backbone_fpn2": {0: "batch_size"},
+                "backbone_fpn_0": {0: "batch_size"},
+                "backbone_fpn_1": {0: "batch_size"},
+                "backbone_fpn_2": {0: "batch_size"},
+                "vision_pos_enc_2": {0: "batch_size"},
+                "prompt": {0: "xp", 1: "batch_size"},
+                "prompt_mask": {0: "batch_size", 1: "xp"},
+                "pred_boxes": {0: "batch_size"},
+                "pred_logits": {0: "batch_size"},
+                "pred_masks": {0: "batch_size"},
+                "presence_logit_dec": {0: "batch_size"},
             },
         )
-    return
 
 
-def export_component(
+def apply_post_export_fixes(output_path: Path, networks: list[str]):
+    """
+    Fix the exported onnx models.
+    Only applies fixes for networks that were actually exported.
+    """
+    if "backboneImageEncoder" not in networks:
+        logging.info("Skipping post-export fixes (backboneImageEncoder not exported)")
+        return
+
+    onnx_model_path = str(output_path / "backboneImageEncoder.onnx")
+    if not os.path.exists(onnx_model_path):
+        logging.warning(f"Expected {onnx_model_path} not found, skipping fixes")
+        return
+
+    model = onnx.load(onnx_model_path)
+    fixed = 0
+    for i, init in enumerate(model.graph.initializer):
+        if "freqs_cis" in init.name:
+            arr = numpy_helper.to_array(init)
+            if np.iscomplexobj(arr):
+                real_arr = np.stack([arr.real, arr.imag], axis=-1).astype(np.float32)
+                print(f"Fixing {init.name}: {arr.shape} complex -> {real_arr.shape} real")
+                new_init = numpy_helper.from_array(real_arr, name=init.name)
+                model.graph.initializer[i].CopyFrom(new_init)
+                fixed += 1
+    onnx.save(model, onnx_model_path)
+    logging.info(f"Applied {fixed} post-export fix(es) to backboneImageEncoder")
+
+
+def _main(
     output: str,
-    image_size: tuple[int] = (720, 1280),
-    opset: int = 17,
+    image_size: tuple[int],
+    opset: int,
+    networks: list[str] | None = None,
 ):
+    # Resolve which networks to export
+    if networks is None or len(networks) == 0:
+        networks = list(EXPORTABLE_NETWORKS)
+    else:
+        unknown = set(networks) - set(EXPORTABLE_NETWORKS)
+        if unknown:
+            raise ValueError(
+                f"Unknown network(s): {unknown}. "
+                f"Available: {EXPORTABLE_NETWORKS}"
+            )
+
+    logging.info(f"Networks to export: {networks}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"Using device: {device}")
 
     # construct the model
-    model_image_resolution: int = 1008
     sam3_root = os.path.join(os.path.dirname(sam3.__file__), "..")
     bpe_path = f"{sam3_root}/sam3/assets/bpe_simple_vocab_16e6.txt.gz"  # text tokenizer for CLIP
     tokenizer = SimpleTokenizer(bpe_path=bpe_path)
@@ -383,16 +446,7 @@ def export_component(
     checkpoint_path = f"{sam3_root}/sam3/assets/sam3.pt"
     starttime = time.time()
     sam3_model = build_sam3_image_model(bpe_path=bpe_path, checkpoint_path=checkpoint_path)
-    logging.info(f"Model loaded in {time.time() - starttime} sec.")
-
-    transform = v2.Compose(
-        [
-            v2.ToDtype(torch.uint8, scale=True),
-            v2.Resize(size=(model_image_resolution, model_image_resolution)),
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-        ]
-    )
+    logging.info(f"Model loaded in {time.time() - starttime:.1f} sec.")
 
     sam3_model = sam3_model.to(device)
     sam3_model.eval()
@@ -400,56 +454,82 @@ def export_component(
     output_path = Path(output)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    dummy_image = torch.randn(3, image_size[0], image_size[1], device=device)
-    dummy_image = transform(dummy_image).unsqueeze(0)
+    exported = []
 
-    logging.info(f"Exporting backbone image encoder (opset {opset}) → {output_path}")
-    export_backboneImageEncoder(
-        sam3_model.backbone,
-        dummy_image,
-        output_path,
-        opset,
-    )
+    if "backboneImageEncoder" in networks:
+        logging.info(f"Exporting backboneImageEncoder (opset {opset}) → {output_path}")
+        export_backboneImageEncoder(
+            sam3_model.backbone,
+            image_size,
+            output_path,
+            opset,
+        )
+        exported.append("backboneImageEncoder")
 
-    logging.info(f"Exporting backbone text prompt encoder (opset {opset}) → {output_path}")
-    export_backboneTextEncoder(
-        sam3_model.backbone,
-        "visual features",
-        tokenizer,
-        output_path,
-        opset,
-    )
+    if "backboneTextEncoder" in networks:
+        logging.info(f"Exporting backboneTextEncoder (opset {opset}) → {output_path}")
+        export_backboneTextEncoder(
+            sam3_model.backbone,
+            "visual features",
+            tokenizer,
+            output_path,
+            opset,
+        )
+        exported.append("backboneTextEncoder")
 
-    logging.info(f"Exporting geometry encoder (opset {opset}) -> {output_path}")
-    export_geometryEncoder(
-        sam3_model,
-        output_path,
-        opset,
-    )
+    if "geometryEncoder" in networks:
+        logging.info(f"Exporting geometryEncoder (opset {opset}) → {output_path}")
+        export_geometryEncoder(
+            sam3_model,
+            output_path,
+            opset,
+        )
+        exported.append("geometryEncoder")
 
-    logging.info(f"Exporting export_transformerDetector (opset {opset}) > {output_path}")
-    export_transformerDetector(
-        sam3_model,
-        output_path,
-        opset,
-    )
+    if "transformerDetector" in networks:
+        logging.info(f"Exporting transformerDetector (opset {opset}) → {output_path}")
+        export_transformerDetector(
+            sam3_model,
+            output_path,
+            opset,
+        )
+        exported.append("transformerDetector")
 
-    # # Validate
-    # import onnx
-    # model = onnx.load(onnx_model_path)
-    # onnx.checker.check_model(model)
-    # logging.info("ONNX validation passed ✓")
+    logging.info(f"Finished exporting: {exported}")
 
-    logging.info("finished exporting 'backboneImageEncoder', 'backboneTextEncoder', 'geometryEncoder', 'transformerDetector'.")
+    apply_post_export_fixes(output_path, networks)
+    logging.info("Done.")
 
 
 if __name__ == "__main__":
     ConfigLogging()
 
-    parser = argparse.ArgumentParser(description="Export SAM 3 to ONNX")
-    parser.add_argument("--output", required=True, help="Output ONNX path")
+    parser = argparse.ArgumentParser(
+        description="Export SAM 3 to ONNX",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"Available networks: {', '.join(EXPORTABLE_NETWORKS)}",
+    )
+    parser.add_argument("--output", required=True, help="Output ONNX directory")
     parser.add_argument("--imagesize", type=int, nargs=2, default=[720, 1280])
-    parser.add_argument("--opset", type=int, default=17)
+    parser.add_argument("--opset", type=int, default=18)
+    parser.add_argument(
+        "--networks",
+        nargs="+",
+        choices=EXPORTABLE_NETWORKS,
+        default=None,
+        help="Network(s) to export. If not specified, exports all.",
+    )
+    parser.add_argument(
+        "--list-networks",
+        action="store_true",
+        help="List available networks and exit.",
+    )
     args = parser.parse_args()
 
-    export_component(args.output, args.imagesize, args.opset)
+    if args.list_networks:
+        print("Available networks:")
+        for name in EXPORTABLE_NETWORKS:
+            print(f"  - {name}")
+        exit(0)
+
+    _main(args.output, args.imagesize, args.opset, args.networks)
