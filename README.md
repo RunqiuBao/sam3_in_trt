@@ -14,7 +14,12 @@ Convert Meta's [Segment Anything Model 3 (SAM 3)](https://github.com/facebookres
 (make sure CUDA and TensorRT are installed in the os.)
 - `git clone git@github.com:RunqiuBao/sam3_in_trt.git && cd sam3_in_trt/`
 - `make installdeps[infer]`
-- `make env[infer]`
+```
+# enter the environment
+make env[infer]
+
+# then you can execute the scripts like: python3 scripts/infer_trt.py ...
+```
 
 ## Quick Start
 
@@ -27,9 +32,9 @@ make download[onnx]
 make export[trt]
 
 # inference examples
-python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_4456.jpg --text "bunny"
-
 python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_4713.jpg --text "robot"
+
+python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_4456.jpg --text "bunny"
 
 python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images/IMG_5078.jpg --text "face"
 
@@ -37,10 +42,10 @@ python3 scripts/infer_trt.py --engine-dir ./trt_engines/ --image ./assets/images
 ```
 <table>
 <tr>
-    <td><img src="assets/readme/IMG_2146_sam3_output.jpg" width="200"/></td>
-    <td><img src="assets/readme/IMG_4713_sam3_output.jpg" width="200"/></td>
-    <td><img src="assets/readme/IMG_4456_sam3_output.jpg" width="200"/></td>                                                        
+    <td><img src="assets/readme/IMG_4713_sam3_output.jpg" width="200"/></td> 
+    <td><img src="assets/readme/IMG_4456_sam3_output.jpg" width="200"/></td>                                                       
     <td><img src="assets/readme/IMG_5078_sam3_output.jpg" width="200"/></td>
+    <td><img src="assets/readme/IMG_2146_sam3_output.jpg" width="200"/></td>
 </tr>
 </table>
 
