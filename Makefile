@@ -155,12 +155,18 @@ override PYFILES ?= $(shell find ./python -type f -name '*.py')
 .PHONY: download[onnx]
 download[onnx]:
 	@set -e; \
-	if ! command -v uvx > /dev/null 2>&1; then \
+	if command -v huggingface-cli > /dev/null 2>&1 && huggingface-cli --help > /dev/null 2>&1; then \
+	    huggingface-cli download runiku-boa/sam3_in_trt --local-dir onnx_models; \
+	elif command -v hf > /dev/null 2>&1; then \
+	    hf download runiku-boa/sam3_in_trt --local-dir onnx_models; \
+	elif command -v uvx > /dev/null 2>&1; then \
+	    uvx --from huggingface_hub hf download runiku-boa/sam3_in_trt --local-dir onnx_models; \
+	else \
 	    echo "${COLOR_CYAN}uvx not found, installing uv...${COLOR_RESET}"; \
 	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	    export PATH="$$HOME/.local/bin:$$PATH"; \
-	fi; \
-	uvx huggingface-cli download runiku-boa/sam3_in_trt --local-dir onnx_models
+	    uvx --from huggingface_hub hf download runiku-boa/sam3_in_trt --local-dir onnx_models; \
+	fi
 
 .PHONY: export[trt]
 export[trt]:
