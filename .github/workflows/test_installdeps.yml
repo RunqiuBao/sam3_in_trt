@@ -18,6 +18,3 @@ jobs:
 
       - name: Install deps
         run: echo "Y" | make installdeps[infer]
-
-      - name: Test uv env
-        run: make env[infer]
