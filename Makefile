@@ -171,6 +171,16 @@ download[onnx]:
 .PHONY: export[trt]
 export[trt]:
 	@set -e; \
+	if ! command -v trtexec > /dev/null 2>&1; then \
+	    TRTEXEC_PATH=$$(find /usr -type f -name "trtexec" 2>/dev/null | head -1); \
+	    if [ -n "$$TRTEXEC_PATH" ]; then \
+	        echo "${COLOR_CYAN}Found trtexec at $$TRTEXEC_PATH${COLOR_RESET}"; \
+	        export PATH="$$(dirname $$TRTEXEC_PATH):$$PATH"; \
+	    else \
+	        echo "${COLOR_RED}trtexec not found. Install TensorRT first.${COLOR_RESET}"; \
+	        exit 1; \
+	    fi; \
+	fi; \
 	DEFAULT_ONNX_DIR=/root/code/sam3_in_trt/onnx_models; \
 	DEFAULT_ENGINE_DIR=/root/code/sam3_in_trt/trt_engines; \
 	printf "ONNX directory [$$DEFAULT_ONNX_DIR]: "; \
