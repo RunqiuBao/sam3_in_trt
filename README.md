@@ -1,5 +1,5 @@
 <div align="left">
-<img src="https://github.com/RunqiuBao/sam3_in_trt/assets/images/sam3_in_trt.png" width="200", height="200">
+<img src="https://github.com/RunqiuBao/sam3_in_trt/blob/main/assets/images/sam3_in_trt.png" width="200", height="200">
 </div>
 
 # SAM3 in TensorRT format
