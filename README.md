@@ -1,5 +1,11 @@
+<div align="left">
+<img src="https://github.com/RunqiuBao/sam3_in_trt/assets/images/sam3_in_trt.png" width="200", height="200">
+</div>
+
 # SAM3 in TensorRT format
 [![CI Test](https://github.com/RunqiuBao/sam3_in_trt/actions/workflows/test_installdeps.yml/badge.svg)](https://github.com/RunqiuBao/sam3_in_trt/actions/workflows/test_installdeps.yml)
+<br>
+![Static Badge](https://img.shields.io/badge/build-passing-green)
 <br>
 
 Convert Meta's [Segment Anything Model 3 (SAM 3)](https://github.com/facebookresearch/sam3) to TensorRT for optimized inference on NVIDIA GPUs.
